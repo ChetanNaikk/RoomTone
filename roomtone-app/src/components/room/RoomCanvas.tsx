@@ -12,6 +12,20 @@ import type { Track } from '@/types/track';
 
 interface RoomCanvasProps { room: Room; }
 
+const SCENE_THEMES: Record<string, { sky: string; desk: string; glow: string }> = {
+  'sunny-day':        { sky: '#2A1E14', desk: '#160C05', glow: 'rgba(255, 185, 90, 0.16)' },
+  'bright-day':       { sky: '#302416', desk: '#1A0E06', glow: 'rgba(255, 205, 110, 0.18)' },
+  'sunrise':          { sky: '#341E18', desk: '#180B07', glow: 'rgba(255, 130, 90, 0.17)' },
+  'sunset':           { sky: '#3A1A0E', desk: '#160703', glow: 'rgba(255, 105, 45, 0.22)' },
+  'blue-hour':        { sky: '#162030', desk: '#0A0C16', glow: 'rgba(90, 150, 240, 0.15)' },
+  'snowfall':         { sky: '#243240', desk: '#121218', glow: 'rgba(160, 205, 245, 0.18)' },
+  'rain-light':       { sky: '#1E2832', desk: '#0E1218', glow: 'rgba(130, 175, 205, 0.15)' },
+  'rain-heavy':       { sky: '#141A22', desk: '#080C10', glow: 'rgba(90, 130, 170, 0.12)' },
+  'thunderstorm':     { sky: '#1C1626', desk: '#0A0612', glow: 'rgba(150, 110, 220, 0.16)' },
+  'fireplace':        { sky: '#321406', desk: '#160602', glow: 'rgba(255, 115, 30, 0.22)' },
+  'northern-lights':  { sky: '#0E2620', desk: '#06100E', glow: 'rgba(70, 240, 170, 0.18)' },
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Typewriter — renders note text with typewriter effect on the paper cloth
 // ─────────────────────────────────────────────────────────────────────────────
@@ -350,6 +364,7 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
   const sceneId  = activeSceneId ?? track?.sceneId ?? 'sunny-day';
   const scene    = useMemo(() => getScene(sceneId as Parameters<typeof getScene>[0]), [sceneId]);
   const videoSrc = scene?.videoSrc ?? DEFAULT_VIDEO_SRC;
+  const theme    = SCENE_THEMES[sceneId] ?? SCENE_THEMES['sunny-day'];
 
   const needlePos  = room.tracks.length > 0 ? (idx + 1) / (room.tracks.length + 1) : 0.40;
 
@@ -363,44 +378,88 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
 
   // Dual-video crossfade for card background (smooth 1s crossfade immediately on track switch)
   const { videoA: cardVideoA, videoB: cardVideoB } = useVideoCrossfade(videoSrc, 1000);
-  // Separate crossfade for the blurred backdrop
-  const { videoA: bgVideoA, videoB: bgVideoB } = useVideoCrossfade(videoSrc, 1000);
 
   return (
     <div style={{
       position: 'fixed', inset: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       overflow: 'hidden',
-      background: '#0D0804',
+      background: `linear-gradient(180deg, ${theme.sky} 0%, ${theme.desk} 100%)`,
       userSelect: 'none',
       WebkitUserSelect: 'none',
     }}>
-      {/* ── Ambient blurred backdrop fills the full viewport smoothly ── */}
+      {/* ── Soft atmospheric radial glow from the window ── */}
       <div style={{
         position: 'absolute', inset: 0,
-        overflow: 'hidden',
-        filter: 'blur(32px) brightness(0.48) saturate(1.15)',
-        transform: 'scale(1.12)',
+        background: `radial-gradient(ellipse at 50% 40%, ${theme.glow} 0%, transparent 68%)`,
+        pointerEvents: 'none',
         zIndex: 0,
+      }} />
+
+      {/* ── Top App Bar (Pinned to device safe area, never letterboxed) ── */}
+      <header style={{
+        position: 'fixed',
+        top: 'max(env(safe-area-inset-top, 16px), 16px)',
+        left: 'max(env(safe-area-inset-left, 16px), 16px)',
+        right: 'max(env(safe-area-inset-right, 16px), 16px)',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        zIndex: 30,
         pointerEvents: 'none',
       }}>
-        {bgVideoA}
-        {bgVideoB}
-      </div>
+        {/* Room Title displayed on top left */}
+        {room.title && (
+          <div style={{
+            pointerEvents: 'auto',
+            fontFamily: "'Nunito', sans-serif",
+            fontSize: 'clamp(15px, 4vw, 21px)',
+            fontWeight: 700,
+            color: 'rgba(255, 245, 225, 0.95)',
+            textShadow: '0 2px 14px rgba(0,0,0,0.85), 0 0 12px rgba(210,150,50,0.35)',
+            maxWidth: '52%',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            letterSpacing: '0.01em',
+          }}>
+            {room.title}
+          </div>
+        )}
 
-      {/* Atmospheric radial vignette blending seamlessly into device borders */}
-      <div style={{
-        position: 'absolute', inset: 0,
-        background: 'radial-gradient(ellipse at center, rgba(13,8,4,0.08) 25%, rgba(13,8,4,0.55) 100%)',
-        zIndex: 1,
-        pointerEvents: 'none',
-      }} />
+        <a
+          href="/create"
+          style={{
+            pointerEvents: 'auto',
+            display: 'flex', alignItems: 'center', gap: '7px',
+            padding: '8px 16px',
+            borderRadius: '24px',
+            background: 'rgba(15, 10, 6, 0.70)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255, 200, 100, 0.28)',
+            color: '#FFE8B0',
+            fontFamily: "'Nunito', sans-serif",
+            fontSize: '12px',
+            fontWeight: 700,
+            letterSpacing: '0.02em',
+            textDecoration: 'none',
+            whiteSpace: 'nowrap',
+            boxShadow: '0 4px 18px rgba(0,0,0,0.5)',
+            transition: 'background 0.2s, border-color 0.2s',
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          Create Your Own Room
+        </a>
+      </header>
 
       {/* ══════════════════════════════════════════════════════════════════
           PORTRAIT CARD — Full-Bleed Adaptive Mobile + Desktop 3:4
-          Width & height scale smoothly on mobile so the vintage radio
-          fills tall phone screens (iPhone 19.5:9) comfortably without
-          black letterboxing, while keeping all knobs & buttons visible.
+          Scales up smoothly on tall mobile devices without letterboxing
+          or cropping knobs/buttons.
           ══════════════════════════════════════════════════════════════════ */}
       <div
         onTouchStart={onTouchStart}
@@ -409,8 +468,8 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
         onTouchCancel={onTouchCancel}
         style={{
           position: 'relative',
-          width: 'min(calc(100dvh * 1086 / 1448), 122vw)',
-          height: 'min(100dvh, calc(122vw * 1448 / 1086))',
+          width: 'min(calc((100dvh - 84px) * 1086 / 1448), calc(100vw + 60px), 520px)',
+          height: 'min(calc(100dvh - 84px), calc((100vw + 60px) * 1448 / 1086))',
           aspectRatio: '1086 / 1448',
           maxHeight: '100dvh',
           flexShrink: 0,
@@ -420,6 +479,8 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
           touchAction: 'pan-y',
           transform: `translateX(${swipeOffset}px)`,
           transition: isDragging ? 'none' : 'transform 0.35s cubic-bezier(0.22, 1, 0.36, 1)',
+          borderRadius: '16px',
+          boxShadow: '0 16px 56px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 200, 100, 0.08)',
         }}
       >
         {/* ── Looping video background (crossfades on scene change) ── */}
@@ -462,58 +523,6 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
           )}
         </AnimatePresence>
 
-        <header style={{
-          position: 'absolute', top: '4.5%',
-          left: 'max(5%, 44px)', right: 'max(5%, 44px)',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          zIndex: 20,
-        }}>
-          {/* Room Title displayed on top left */}
-          {room.title && (
-            <div style={{
-              fontFamily: "'Nunito', sans-serif",
-              fontSize: 'clamp(14px, 3.6cqw, 20px)',
-              fontWeight: 600,
-              fontStyle: 'normal',
-              color: 'rgba(255, 242, 218, 0.92)',
-              textShadow: '0 2px 10px rgba(0,0,0,0.8), 0 0 10px rgba(210,150,50,0.3)',
-              maxWidth: '55%',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              letterSpacing: '0.01em',
-            }}>
-              {room.title}
-            </div>
-          )}
-
-          <a
-            href="/create"
-            style={{
-              display: 'flex', alignItems: 'center', gap: '7px',
-              padding: '9px 16px',
-              borderRadius: '24px',
-              background: 'rgba(10,6,2,0.40)',
-              backdropFilter: 'blur(18px)',
-              WebkitBackdropFilter: 'blur(18px)',
-              border: '1px solid rgba(255,200,100,0.22)',
-              color: '#FFE8B0',
-              fontFamily: "'Nunito', sans-serif",
-              fontSize: '13px',
-              fontWeight: 700,
-              letterSpacing: '0.02em',
-              textDecoration: 'none',
-              whiteSpace: 'nowrap',
-              transition: 'background 0.2s, border-color 0.2s',
-              boxShadow: '0 2px 12px rgba(0,0,0,0.25)',
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 5v14M5 12h14"/>
-            </svg>
-            Create Your Own Room
-          </a>
-        </header>
 
         {/* ────────────────────────────────────────────────────────────
             SPEAKER CLOTH OVERLAY
@@ -661,6 +670,47 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
         </div>
 
       </div>
+
+      {/* ── Bottom Track Dots & Gesture Indicator ── */}
+      <footer style={{
+        position: 'fixed',
+        bottom: 'max(env(safe-area-inset-bottom, 12px), 12px)',
+        left: 0, right: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '6px',
+        zIndex: 25,
+        pointerEvents: 'none',
+      }}>
+        {room.tracks.length > 1 && (
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            {room.tracks.map((_, i) => (
+              <div
+                key={i}
+                style={{
+                  width: i === idx ? '18px' : '6px',
+                  height: '6px',
+                  borderRadius: '3px',
+                  background: i === idx ? '#FFB04A' : 'rgba(255, 240, 220, 0.28)',
+                  boxShadow: i === idx ? '0 0 8px rgba(255, 176, 74, 0.8)' : 'none',
+                  transition: 'all 0.35s cubic-bezier(0.22, 1, 0.36, 1)',
+                }}
+              />
+            ))}
+          </div>
+        )}
+        <div style={{
+          fontFamily: "'Nunito', sans-serif",
+          fontSize: '11px',
+          fontWeight: 600,
+          color: 'rgba(255, 220, 160, 0.50)',
+          letterSpacing: '0.08em',
+          textShadow: '0 1px 4px rgba(0,0,0,0.7)',
+        }}>
+          swipe to tune
+        </div>
+      </footer>
     </div>
   );
 }
