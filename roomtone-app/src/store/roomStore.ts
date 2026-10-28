@@ -88,8 +88,8 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     set((s) => ({ playback: { ...s.playback, currentTrackIndex: prev } }));
   },
 
-  musicVolume: 0.55,
-  ambientVolume: 0.08,
+  musicVolume: 0.5,
+  ambientVolume: 0.02,
   setMusicVolume: (musicVolume) => set({ musicVolume }),
   setAmbientVolume: (ambientVolume) => set({ ambientVolume }),
 }));

@@ -31,9 +31,20 @@ export async function searchItunes(query: string, limit = 15): Promise<ItunesSea
  */
 export function proxyPreviewUrl(originalUrl: string): string {
   if (!originalUrl) return '';
+  let target = originalUrl;
+  if (target.includes('/api/preview?url=')) {
+    const rawParam = target.split('/api/preview?url=')[1];
+    if (rawParam) {
+      try {
+        target = decodeURIComponent(rawParam);
+      } catch {
+        target = rawParam;
+      }
+    }
+  }
   // On the server (SSR), return original — proxy is client-side only
-  if (typeof window === 'undefined') return originalUrl;
-  return `/api/preview?url=${encodeURIComponent(originalUrl)}`;
+  if (typeof window === 'undefined') return target;
+  return `/api/preview?url=${encodeURIComponent(target)}`;
 }
 
 /**

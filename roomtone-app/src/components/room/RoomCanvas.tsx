@@ -6,6 +6,7 @@ import { useRoomStore } from '@/store/roomStore';
 import { useAudio } from '@/hooks/useAudio';
 import { getScene } from '@/lib/scenes/sceneDefinitions';
 import { DEFAULT_VIDEO_SRC } from '@/lib/scenes/sceneDefinitions';
+import { getAudioEngine } from '@/lib/audio/audioEngine';
 import type { Room } from '@/types/room';
 import type { Track } from '@/types/track';
 
@@ -108,14 +109,14 @@ function RadioBtn({ onClick, id }: { onClick?: () => void; id?: string }) {
       onClick={onClick}
       style={{
         flex: 1, height: '100%',
-        background: 'transparent',
+        backgroundColor: 'rgba(255,176,74,0)',
         border: 'none',
         outline: 'none',
         cursor: onClick ? 'pointer' : 'default',
         borderRadius: '4px',
         WebkitTapHighlightColor: 'transparent',
       }}
-      whileHover={onClick ? { background: 'rgba(255,176,74,0.10)' } : {}}
+      whileHover={onClick ? { backgroundColor: 'rgba(255,176,74,0.10)' } : {}}
       whileTap={onClick ? { scale: 0.88 } : {}}
     />
   );
@@ -214,28 +215,142 @@ function useVideoCrossfade(src: string, fadeDuration = 2500) {
 //  5 BUTTONS:        top 68.5% → 72.4%  |  left 26.5% / right 26.5%
 // ═════════════════════════════════════════════════════════════════════════════
 export default function RoomCanvas({ room }: RoomCanvasProps) {
-  const { playback, activeSceneId } = useRoomStore();
-  const { toggle, nextTrack } = useAudio();
-  const [volDeg,  setVolDeg]  = useState(130);
+  const { playback, activeSceneId, musicVolume, setMusicVolume } = useRoomStore();
+  const { toggle, play, nextTrack, prevTrack } = useAudio();
+
+  // Volume knob — 5 discrete notches: 0=mute (0°), 1=25% (22.5°), 2=50% (45°), 3=75% (67.5°), 4=100% (90°)
+  // Starts at 50% volume (45° tilt)
+  const volToNotch = (v: number) => Math.round(v * 4) as 0|1|2|3|4;
+  const notchToVol = (n: number) => n / 4;
+  const notchToDeg = (n: number) => n * 22.5;
+
+  const [volNotch, setVolNotch] = useState<0|1|2|3|4>(() => volToNotch(musicVolume));
   const [tuneDeg, setTuneDeg] = useState(0);
+
+  // Swipe to change track (Instagram Stories / Spotify Canvas style)
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+  const touchStartTime = useRef<number>(0);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const [swipeIndicator, setSwipeIndicator] = useState<'next' | 'prev' | null>(null);
 
   const idx   = playback.currentTrackIndex;
   const track: Track | null = room.tracks[idx] ?? null;
 
-  // Auto-rotate tune knob whenever track changes
+  // Auto-rotate tune knob whenever track changes (direction-aware)
   const prevIdx = useRef(idx);
+  const prevDirection = useRef<1 | -1>(1); // +1 = forward, -1 = backward
   useEffect(() => {
     if (prevIdx.current !== idx) {
+      setTuneDeg(p => p + 72 * prevDirection.current);
       prevIdx.current = idx;
-      setTuneDeg(p => p + 72);
     }
   }, [idx]);
+
+  const handleNext = useCallback(() => {
+    prevDirection.current = 1;
+    if (!playback.hasStarted) play();
+    else nextTrack();
+  }, [nextTrack, playback.hasStarted, play]);
+
+  const handlePrev = useCallback(() => {
+    prevDirection.current = -1;
+    if (!playback.hasStarted) play();
+    else prevTrack();
+  }, [prevTrack, playback.hasStarted, play]);
+
+  const handleVolClick = useCallback(() => {
+    const newNotch = ((volNotch + 1) % 5) as 0|1|2|3|4;
+    setVolNotch(newNotch);
+    setMusicVolume(notchToVol(newNotch));
+    getAudioEngine().playClick();
+  }, [volNotch, setMusicVolume]);
+
+  // Touch gesture listeners for horizontal swipe
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+    touchStartTime.current = Date.now();
+    setIsDragging(true);
+  }, []);
+
+  const onTouchMove = useCallback((e: React.TouchEvent) => {
+    if (touchStartX.current === null || touchStartY.current === null) return;
+    const dx = e.touches[0].clientX - touchStartX.current;
+    const dy = e.touches[0].clientY - touchStartY.current;
+
+    // Follow horizontal movement if predominantly horizontal
+    if (Math.abs(dx) > Math.abs(dy)) {
+      const damped = Math.sign(dx) * Math.min(36, Math.abs(dx) * 0.35);
+      setSwipeOffset(damped);
+      if (dx < -30) setSwipeIndicator('next');
+      else if (dx > 30) setSwipeIndicator('prev');
+      else setSwipeIndicator(null);
+    }
+  }, []);
+
+  const onTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (touchStartX.current === null || touchStartY.current === null) {
+      setSwipeOffset(0);
+      setIsDragging(false);
+      setSwipeIndicator(null);
+      return;
+    }
+
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    const dy = e.changedTouches[0].clientY - touchStartY.current;
+    const dt = Date.now() - touchStartTime.current;
+
+    touchStartX.current = null;
+    touchStartY.current = null;
+    setSwipeOffset(0);
+    setIsDragging(false);
+    setSwipeIndicator(null);
+
+    const isFlick = dt < 300 && Math.abs(dx) > 30;
+    const isSwipe = Math.abs(dx) > 45;
+
+    if ((isFlick || isSwipe) && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      if (dx < 0) {
+        handleNext();
+      } else {
+        handlePrev();
+      }
+    }
+  }, [handleNext, handlePrev]);
+
+  const onTouchCancel = useCallback(() => {
+    touchStartX.current = null;
+    touchStartY.current = null;
+    setSwipeOffset(0);
+    setIsDragging(false);
+    setSwipeIndicator(null);
+  }, []);
+
+  // Desktop keyboard navigation (ArrowLeft/Right to tune, Space to play/pause)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleNext();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handlePrev();
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleNext, handlePrev, toggle]);
 
   const sceneId  = activeSceneId ?? track?.sceneId ?? 'sunny-day';
   const scene    = useMemo(() => getScene(sceneId as Parameters<typeof getScene>[0]), [sceneId]);
   const videoSrc = scene?.videoSrc ?? DEFAULT_VIDEO_SRC;
 
-  const handleNext = useCallback(() => { nextTrack(); }, [nextTrack]);
   const needlePos  = room.tracks.length > 0 ? (idx + 1) / (room.tracks.length + 1) : 0.40;
 
   const hasNote  = Boolean(track?.note);
@@ -256,13 +371,16 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
       position: 'fixed', inset: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       overflow: 'hidden',
+      background: '#0D0804',
+      userSelect: 'none',
+      WebkitUserSelect: 'none',
     }}>
-      {/* ── Blurred video backdrop fills the full screen behind the card ── */}
+      {/* ── Ambient blurred backdrop fills the full viewport smoothly ── */}
       <div style={{
         position: 'absolute', inset: 0,
         overflow: 'hidden',
-        filter: 'blur(40px) brightness(0.18) saturate(0.55)',
-        transform: 'scale(1.1)',
+        filter: 'blur(32px) brightness(0.48) saturate(1.15)',
+        transform: 'scale(1.12)',
         zIndex: 0,
         pointerEvents: 'none',
       }}>
@@ -270,21 +388,38 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
         {bgVideoB}
       </div>
 
+      {/* Atmospheric radial vignette blending seamlessly into device borders */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'radial-gradient(ellipse at center, rgba(13,8,4,0.08) 25%, rgba(13,8,4,0.55) 100%)',
+        zIndex: 1,
+        pointerEvents: 'none',
+      }} />
+
       {/* ══════════════════════════════════════════════════════════════════
-          PORTRAIT CARD  — 3:4 aspect ratio (1086:1448 ≈ 0.75)
-          height: 100vh, width auto-constrained by aspect-ratio + overflow
+          PORTRAIT CARD — Full-Bleed Adaptive Mobile + Desktop 3:4
+          Width & height scale smoothly on mobile so the vintage radio
+          fills tall phone screens (iPhone 19.5:9) comfortably without
+          black letterboxing, while keeping all knobs & buttons visible.
           ══════════════════════════════════════════════════════════════════ */}
       <div
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchCancel}
         style={{
           position: 'relative',
-          height: '100dvh',
+          width: 'min(calc(100dvh * 1086 / 1448), 122vw)',
+          height: 'min(100dvh, calc(122vw * 1448 / 1086))',
           aspectRatio: '1086 / 1448',
-          maxWidth: '100vw',
           maxHeight: '100dvh',
           flexShrink: 0,
           containerType: 'inline-size',
           zIndex: 2,
           overflow: 'hidden',
+          touchAction: 'pan-y',
+          transform: `translateX(${swipeOffset}px)`,
+          transition: isDragging ? 'none' : 'transform 0.35s cubic-bezier(0.22, 1, 0.36, 1)',
         }}
       >
         {/* ── Looping video background (crossfades on scene change) ── */}
@@ -293,8 +428,43 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
 
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Nunito:wght@500;700&display=swap');`}</style>
 
+        {/* ── Swipe direction HUD badge ── */}
+        <AnimatePresence>
+          {swipeIndicator && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.88 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.88 }}
+              transition={{ duration: 0.15 }}
+              style={{
+                position: 'absolute',
+                top: '55%',
+                [swipeIndicator === 'next' ? 'right' : 'left']: '4%',
+                transform: 'translateY(-50%)',
+                padding: '7px 14px',
+                borderRadius: '20px',
+                background: 'rgba(20, 12, 6, 0.80)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255, 176, 74, 0.45)',
+                boxShadow: '0 0 16px rgba(255, 176, 74, 0.25)',
+                color: '#FFB04A',
+                fontFamily: "'Nunito', sans-serif",
+                fontSize: '12px',
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                pointerEvents: 'none',
+                zIndex: 30,
+              }}
+            >
+              {swipeIndicator === 'next' ? 'NEXT →' : '← PREV'}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <header style={{
-          position: 'absolute', top: '4.5%', left: '5%', right: '5%',
+          position: 'absolute', top: '4.5%',
+          left: 'max(5%, 44px)', right: 'max(5%, 44px)',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           zIndex: 20,
         }}>
@@ -412,13 +582,14 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
 
 
         {/*
-          VOLUME KNOB (left) — moved down 3% from video-measured cy=66%
-          VIDEO-MEASURED: cx=24.3%, now cy=69%
+          VOLUME KNOB (left) — 5-notch system, rotates 0° (mute) to 90° (100%)
+          Starts at 50% volume (45° tilt)
+          Each click advances one notch and updates musicVolume
         */}
         <motion.div
-          animate={{ rotate: volDeg }}
-          transition={{ duration: 0.55, ease: [0.22, 0.61, 0.36, 1] }}
-          onClick={() => setVolDeg(p => (p + 20) % 360)}
+          animate={{ rotate: notchToDeg(volNotch) }}
+          transition={{ duration: 0.35, ease: [0.22, 0.61, 0.36, 1] }}
+          onClick={handleVolClick}
           style={{
             position: 'absolute',
             top:  'calc(69.0% - 5.0%)',
@@ -433,9 +604,12 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
             position: 'absolute', top: '10%', left: '50%',
             transform: 'translateX(-50%)',
             width: '3px', height: '15%',
-            background: '#FFB04A',
+            background: volNotch === 0 ? 'rgba(255,176,74,0.3)' : '#FFB04A',
             borderRadius: '2px',
-            boxShadow: '0 0 7px rgba(255,176,74,1), 0 0 14px rgba(255,140,20,0.6)',
+            boxShadow: volNotch === 0
+              ? 'none'
+              : '0 0 7px rgba(255,176,74,1), 0 0 14px rgba(255,140,20,0.6)',
+            transition: 'background 0.3s, box-shadow 0.3s',
           }} />
         </motion.div>
 
@@ -480,7 +654,7 @@ export default function RoomCanvas({ room }: RoomCanvasProps) {
           background: 'transparent',
         }}>
           <RadioBtn />
-          <RadioBtn id="radio-prev-btn" />
+          <RadioBtn id="radio-prev-btn" onClick={handlePrev} />
           <RadioBtn id="radio-play-btn" onClick={toggle} />
           <RadioBtn id="radio-next-btn" onClick={handleNext} />
           <RadioBtn />

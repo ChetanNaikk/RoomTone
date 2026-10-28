@@ -23,7 +23,7 @@ const ALLOWED_HOSTS = [
 function isAllowedUrl(urlStr: string): boolean {
   try {
     const url = new URL(urlStr);
-    if (url.protocol !== 'https:') return false;
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
     return ALLOWED_HOSTS.some(h => url.hostname === h || url.hostname.endsWith('.' + h));
   } catch {
     return false;
@@ -46,12 +46,36 @@ export async function GET(req: NextRequest) {
   try {
     const rangeHeader = req.headers.get('range');
     const upstreamHeaders: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (compatible; Roomtone/1.0)',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'audio/*,*/*',
     };
     if (rangeHeader) upstreamHeaders['Range'] = rangeHeader;
 
-    const upstream = await fetch(decoded, { headers: upstreamHeaders });
+    let upstream: Response;
+    try {
+      upstream = await fetch(decoded, { headers: upstreamHeaders });
+    } catch (fetchErr) {
+      // If HTTPS to audio-ssl.itunes.apple.com fails (common ECONNRESET from certain regional ISPs), fallback to HTTP
+      if (decoded.startsWith('https://audio-ssl.itunes.apple.com')) {
+        const httpFallback = decoded.replace('https://', 'http://');
+        upstream = await fetch(httpFallback, { headers: upstreamHeaders });
+      } else {
+        throw fetchErr;
+      }
+    }
+
+    if (!upstream.ok && upstream.status !== 206) {
+      // If upstream returned an error, also try HTTP fallback before giving up
+      if (decoded.startsWith('https://audio-ssl.itunes.apple.com')) {
+        try {
+          const httpFallback = decoded.replace('https://', 'http://');
+          const fallbackRes = await fetch(httpFallback, { headers: upstreamHeaders });
+          if (fallbackRes.ok || fallbackRes.status === 206) {
+            upstream = fallbackRes;
+          }
+        } catch { /* ignore fallback error, will use original response */ }
+      }
+    }
 
     if (!upstream.ok && upstream.status !== 206) {
       return NextResponse.json(

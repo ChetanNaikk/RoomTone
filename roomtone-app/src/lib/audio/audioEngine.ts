@@ -10,8 +10,8 @@ type ProgressCallback = (seek: number, duration: number) => void;
 export class AudioEngine {
   private musicHowl: Howl | null = null;
   private state: AudioEngineState = 'idle';
-  private _musicVolume = 0.55;
-  private _ambientVolume = 0.08;
+  private _musicVolume = 0.5;
+  private _ambientVolume = 0.02;
 
   private onTrackEnd: TrackEndCallback | null = null;
   private onProgress: ProgressCallback | null = null;
@@ -78,7 +78,13 @@ export class AudioEngine {
 
   // ── UI Sounds ──────────────────────────────────────────────────────────────
 
-  playClick() {
+  async playClick() {
+    if (!this.audioCtx) {
+      await this.init();
+    }
+    if (this.audioCtx?.state === 'suspended') {
+      try { await this.audioCtx.resume(); } catch { /* ok */ }
+    }
     if (!this.audioCtx || !this.clickBuffer) return;
     const src = this.audioCtx.createBufferSource();
     src.buffer = this.clickBuffer;
@@ -103,7 +109,7 @@ export class AudioEngine {
     const gain = this.audioCtx.createGain();
     const now = this.audioCtx.currentTime;
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.28, now + 0.05);
+    gain.gain.linearRampToValueAtTime(0.05, now + 0.05);
     gain.gain.linearRampToValueAtTime(0, now + ms / 1000);
     src.connect(bp); bp.connect(gain); gain.connect(this.audioCtx.destination);
     src.start();
@@ -204,8 +210,23 @@ export class AudioEngine {
     });
   }
 
-  pause() { this.musicHowl?.pause(); this.stopProgressPolling(); this.state = 'paused'; }
-  resume() { this.musicHowl?.play(); this.startProgressPolling(); this.state = 'playing'; }
+  pause() {
+    this.musicHowl?.pause();
+    this.stopProgressPolling();
+    this.state = 'paused';
+    if (this.ambientGain && this.audioCtx) {
+      this.ambientGain.gain.setTargetAtTime(0, this.audioCtx.currentTime, 0.15);
+    }
+  }
+
+  resume() {
+    this.musicHowl?.play();
+    this.startProgressPolling();
+    this.state = 'playing';
+    if (this.ambientGain && this.audioCtx) {
+      this.ambientGain.gain.setTargetAtTime(this._ambientVolume, this.audioCtx.currentTime, 0.2);
+    }
+  }
   seek(s: number) { this.musicHowl?.seek(s); }
   getDuration(): number { return (this.musicHowl?.duration() as number) || 30; }
   getSeek(): number { return (this.musicHowl?.seek() as number) || 0; }
@@ -213,7 +234,9 @@ export class AudioEngine {
 
   setMusicVolume(v: number) {
     this._musicVolume = v;
-    if (this.musicHowl && this.state === 'playing') this.musicHowl.volume(v);
+    if (this.musicHowl) {
+      try { this.musicHowl.volume(v); } catch { /* ok */ }
+    }
   }
 
   stop() { this._destroyCurrent(); }

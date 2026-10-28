@@ -76,7 +76,28 @@ export function useAudio() {
     setTimeout(() => setTransitioning(false), 2500);
   }, [startTrack, setTransitioning, setProgress]);
 
-  // Keep the ref in sync so onTrackEnd always has the latest doNext
+  // ── Go back to the previous track ─────────────────────────────────────────
+  const doPrev = useCallback(async () => {
+    const state = useRoomStore.getState();
+    if (!state.room || state.playback.isTransitioning) return;
+
+    const len = state.room.tracks.length;
+    const prevIdx = (state.playback.currentTrackIndex - 1 + len) % len;
+    const engine = getAudioEngine();
+
+    setTransitioning(true);
+    engine.playClick();
+    engine.playTuningStatic(700);
+
+    // Update track index immediately so UI reacts
+    state.setCurrentTrack(prevIdx);
+    setProgress(0, 30);
+
+    await startTrack(prevIdx, true);
+    setTimeout(() => setTransitioning(false), 2500);
+  }, [startTrack, setTransitioning, setProgress]);
+
+  // Keep the refs in sync so onTrackEnd always has the latest doNext
   useEffect(() => { doNextRef.current = doNext; }, [doNext]);
 
   // ── Wire engine callbacks once on mount ────────────────────────────────────
@@ -146,11 +167,16 @@ export function useAudio() {
     await doNext();
   }, [playback.hasStarted, doNext]);
 
+  const prevTrack = useCallback(async () => {
+    if (!playback.hasStarted) return;
+    await doPrev();
+  }, [playback.hasStarted, doPrev]);
+
   const seekTo = useCallback((s: number) => { getAudioEngine().seek(s); }, []);
 
   // ── Volume sync ────────────────────────────────────────────────────────────
   useEffect(() => { getAudioEngine().setMusicVolume(musicVolume); }, [musicVolume]);
   useEffect(() => { getAudioEngine().setAmbientVolume(ambientVolume); }, [ambientVolume]);
 
-  return { play, pause, resume, toggle, nextTrack, seekTo, initEngine };
+  return { play, pause, resume, toggle, nextTrack, prevTrack, seekTo, initEngine };
 }
